@@ -1,0 +1,42 @@
+[package]
+name = "transcend"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "transcend"
+path = "src/lib.rs"
+
+[[bin]]
+name = "transcend"
+path = "src/main.rs"
+
+[[bin]]
+name = "transcend-tui"
+path = "src/main_tui.rs"
+
+[features]
+default = ["tui"]
+tui = []
+gui = ["eframe", "egui"]
+
+[dependencies]
+anyhow = "1"
+thiserror = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "time"] }
+
+# TUI
+ratatui = "0.28"
+crossterm = "0.28"
+
+# AI plumbing
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+async-trait = "0.1"
+
+# GUI (later)
+egui = { version = "0.28", optional = true }
+eframe = { version = "0.28", optional = true }
+ringbuf = "0.4.8"
+portable-pty = "0.9.0"
