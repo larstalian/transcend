@@ -8,13 +8,18 @@ use crossterm::{
 };
 use ratatui::{prelude::CrosstermBackend, Terminal};
 
-use crate::{pty::ShellHost, queue::SessionChannel, session::Session};
+use crate::{pty::ShellHost, queue::IoChannels, session::Session};
 
 pub async fn run() -> Result<()> {
-    let SessionChannel { prod, cons } = SessionChannel::new();
+    let IoChannels {
+        out_prod,
+        out_cons,
+        in_prod,
+        in_cons,
+    } = IoChannels::new();
 
-    let pty = ShellHost::new(prod);
-    let mut session = Session::new(cons);
+    let pty = ShellHost::new(out_prod, in_cons);
+    let mut session = Session::new(out_cons, in_prod);
 
     // start PTY on own OS thread
     let pty_handle = pty.spawn();
