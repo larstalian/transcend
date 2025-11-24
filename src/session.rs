@@ -1,7 +1,5 @@
 use {
     crate::queue::{InProd, OutCons},
-    anyhow::Result,
-    crossterm::event::{KeyCode, KeyEvent, KeyModifiers},
     ratatui::{
         layout::{Alignment, Rect},
         style::{Color, Style},
@@ -11,11 +9,18 @@ use {
     ringbuf::traits::{Consumer, Producer},
 };
 
+const MAX_LINES: usize = 2000;
+
 pub struct Session {
     out_cons: OutCons,
     in_prod: InProd,
-    log: String,
+    buf: TerminalBuffer,
     in_escape: bool,
+}
+
+struct TerminalBuffer {
+    lines: Vec<String>,
+    current: String,
 }
 
 impl Session {
@@ -23,7 +28,7 @@ impl Session {
         Self {
             out_cons,
             in_prod,
-            log: String::new(),
+            buf: TerminalBuffer::new(),
             in_escape: false,
         }
     }
@@ -39,66 +44,11 @@ impl Session {
             .title("Transcend :: Shell")
             .border_style(Style::default().fg(Color::White));
 
-        let content = Paragraph::new(self.log.as_str())
+        let content = Paragraph::new(self.buf.as_render_string())
             .alignment(Alignment::Left)
             .block(block);
 
         frame.render_widget(content, area);
-    }
-
-    pub fn handle_key(&mut self, key: KeyEvent) -> Result<()> {
-        use KeyCode::*;
-
-        let mut buf: [u8; 8] = [0; 8];
-        let mut len = 0;
-
-        match (key.code, key.modifiers) {
-            // Ctrl-C
-            (Char('c'), m) if m.contains(KeyModifiers::CONTROL) => {
-                buf[0] = 0x03;
-                len = 1;
-            }
-            // Normal printable chars
-            (Char(ch), _) => {
-                buf[0] = ch as u8;
-                len = 1;
-            }
-            (Enter, _) => {
-                buf[0] = b'\r';
-                len = 1;
-            }
-            (Backspace, _) => {
-                buf[0] = 0x7f;
-                len = 1;
-            }
-            (Tab, _) => {
-                buf[0] = b'\t';
-                len = 1;
-            }
-            (Left, _) => {
-                buf[..3].copy_from_slice(b"\x1b[D");
-                len = 3;
-            }
-            (Right, _) => {
-                buf[..3].copy_from_slice(b"\x1b[C");
-                len = 3;
-            }
-            (Up, _) => {
-                buf[..3].copy_from_slice(b"\x1b[A");
-                len = 3;
-            }
-            (Down, _) => {
-                buf[..3].copy_from_slice(b"\x1b[B");
-                len = 3;
-            }
-            _ => {}
-        }
-
-        if len > 0 {
-            let _ = self.in_prod.push_slice(&buf[..len]);
-        }
-
-        Ok(())
     }
 
     /// FIXME
@@ -116,13 +66,86 @@ impl Session {
                 self.in_escape = true;
             }
             b'\r' => {
-                self.log.push('\n');
+                self.buf.new_line();
             }
             b'\n' => {}
             0x20..=0x7e => {
-                self.log.push(b as char);
+                self.buf.push_char(b as char);
             }
             _ => {}
         }
+    }
+
+    pub fn snapshot(&self, max_lines: usize) -> String {
+        self.buf.tail(max_lines)
+    }
+
+    /// Inject to scrollback
+    pub fn inject_line(&mut self, prefix: &str, text: &str) {
+        self.buf.new_line();
+        self.buf.push_str(prefix);
+        self.buf.push_char(' ');
+        self.buf.push_str(text);
+        self.buf.new_line();
+    }
+
+    pub fn send_line(&mut self, line: &str) {
+        if line.is_empty() {
+            let _ = self.in_prod.push_slice(b"\r");
+            return;
+        }
+
+        let mut bytes = line.as_bytes().to_vec();
+        bytes.push(b'\r');
+        let _ = self.in_prod.push_slice(&bytes);
+    }
+}
+
+impl TerminalBuffer {
+    fn new() -> Self {
+        Self {
+            lines: Vec::new(),
+            current: String::new(),
+        }
+    }
+
+    fn push_char(&mut self, ch: char) {
+        self.current.push(ch);
+    }
+
+    fn push_str(&mut self, s: &str) {
+        self.current.push_str(s);
+    }
+
+    fn new_line(&mut self) {
+        let mut line = String::new();
+        std::mem::swap(&mut line, &mut self.current);
+        self.lines.push(line);
+        if self.lines.len() > MAX_LINES {
+            let excess = self.lines.len() - MAX_LINES;
+            self.lines.drain(0..excess);
+        }
+    }
+
+    /// TODO: more chad
+    fn as_render_string(&self) -> String {
+        let mut out = String::new();
+        for line in &self.lines {
+            out.push_str(line);
+            out.push('\n');
+        }
+        out.push_str(&self.current);
+        out
+    }
+
+    fn tail(&self, max_lines: usize) -> String {
+        let start = self.lines.len().saturating_sub(max_lines);
+        let mut out = String::new();
+        for line in &self.lines[start..] {
+            out.push_str(line);
+            out.push('\n');
+        }
+        out.push_str(&self.current);
+        out
     }
 }
