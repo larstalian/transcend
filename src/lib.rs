@@ -1,3 +1,4 @@
+pub mod gui;
 mod plugin;
 mod pty;
 mod queue;
